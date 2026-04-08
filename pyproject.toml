@@ -1,0 +1,16 @@
+[project]
+name = "cloud-saviour"
+version = "0.1.0"
+description = "OpenEnv RL-based cloud optimization environment"
+authors = [{name = "Kamalesh_j"}]
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "requests",
+    "openai"
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"

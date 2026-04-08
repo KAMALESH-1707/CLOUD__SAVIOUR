@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,12 +45,14 @@ def health_check():
 
 
 @app.post("/reset")
-def reset_env(req: TaskRequest):
-    if req.task_id not in env_instances:
-        env_instances[req.task_id] = CloudEnv()
+def reset_env(req: Optional[TaskRequest] = None, task_id: Optional[str] = None):
+    final_task_id = task_id or (req.task_id if req else "full")
 
-    env = env_instances[req.task_id]
-    state = env.reset(req.task_id)
+    if final_task_id not in env_instances:
+        env_instances[final_task_id] = CloudEnv()
+
+    env = env_instances[final_task_id]
+    state = env.reset(final_task_id)
     return state.dict()
 
 
