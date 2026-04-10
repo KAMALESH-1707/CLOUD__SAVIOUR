@@ -7,22 +7,21 @@ from typing import Dict, List, Optional
 import requests
 from openai import OpenAI
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:7860")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
-HF_TOKEN = os.getenv("HF_TOKEN")
+API_KEY = os.getenv("API_KEY")
 
-if HF_TOKEN is None:
-    raise ValueError("HF_TOKEN environment variable is required")
+if API_KEY is None:
+    raise ValueError("API_KEY environment variable is required")
 
-# Required OpenAI client initialization
 client = OpenAI(
     base_url=API_BASE_URL,
-    api_key=HF_TOKEN,
+    api_key=API_KEY,
 )
 
 TASKS = ["web", "ai", "full"]
 ENV_NAME = "cloud-saviour"
-MAX_STEPS = 8
+MAX_STEPS = 5
 
 
 def format_bool(value: bool) -> str:
@@ -36,7 +35,7 @@ def format_reward(value: float) -> str:
 def safe_post(path: str, payload: Optional[Dict] = None, timeout: int = 30) -> Optional[requests.Response]:
     try:
         response = requests.post(
-            f"{API_BASE_URL}{path}",
+            f"http://127.0.0.1:7860{path}",
             json=payload,
             timeout=timeout,
         )
@@ -48,7 +47,7 @@ def safe_post(path: str, payload: Optional[Dict] = None, timeout: int = 30) -> O
 def safe_get(path: str, params: Optional[Dict] = None, timeout: int = 10) -> Optional[requests.Response]:
     try:
         response = requests.get(
-            f"{API_BASE_URL}{path}",
+            f"http://127.0.0.1:7860{path}",
             params=params,
             timeout=timeout,
         )
@@ -99,27 +98,41 @@ def step_env(task_id: str, action: str) -> Optional[Dict]:
         return None
 
 
-def choose_action(task_id: str, step: int) -> str:
-    if task_id == "web":
-        if step == 1:
-            return "enable_cache"
-        if step in (2, 3):
-            return "scale_up_web"
-        return "do_nothing"
+def llm_choose_action(task_id: str) -> str:
+    allowed_actions = {
+        "web": ["enable_cache", "scale_up_web", "scale_down_web", "do_nothing"],
+        "ai": ["route_ai_small", "route_ai_large", "do_nothing"],
+        "full": ["move_batch_to_spot", "enable_cache", "route_ai_small", "do_nothing"],
+    }
 
-    if task_id == "ai":
-        if step == 1:
-            return "route_ai_small"
-        return "do_nothing"
+    prompt = (
+        f"You are choosing one action for task '{task_id}'. "
+        f"Return only one action from this list: {allowed_actions[task_id]}"
+    )
 
-    # full
-    if step == 1:
-        return "move_batch_to_spot"
-    if step == 2:
-        return "enable_cache"
-    if step == 3:
-        return "route_ai_small"
-    return "do_nothing"
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "Return only a single valid action string."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0,
+        )
+
+        action = response.choices[0].message.content.strip()
+        if action in allowed_actions[task_id]:
+            return action
+    except Exception:
+        pass
+
+    # Safe fallback
+    fallback = {
+        "web": "enable_cache",
+        "ai": "route_ai_small",
+        "full": "move_batch_to_spot",
+    }
+    return fallback[task_id]
 
 
 def emit_start(task_id: str) -> None:
@@ -158,7 +171,7 @@ def run_episode(task_id: str) -> None:
         done = False
 
         while not done and steps < MAX_STEPS:
-            action = choose_action(task_id, steps + 1)
+            action = llm_choose_action(task_id)
             result = step_env(task_id, action)
 
             if result is None:
