@@ -1,14 +1,21 @@
-import json
 import os
 import sys
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import requests
 from openai import OpenAI
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:7860")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
-HF_TOKEN = os.getenv("HF_TOKEN", "")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
+HF_TOKEN = os.getenv("HF_TOKEN")
+
+if HF_TOKEN is None:
+    raise ValueError("HF_TOKEN environment variable is required")
+
+client = OpenAI(
+    base_url=API_BASE_URL,
+    api_key=HF_TOKEN,
+)
 
 TASKS = ["web", "ai", "full"]
 
@@ -19,28 +26,12 @@ SAFE_ACTIONS = {
 }
 
 
-def log_start(task_id: str):
-    print(f'[START] {json.dumps({"task_id": task_id})}')
-    sys.stdout.flush()
+def format_bool(value: bool) -> str:
+    return "true" if value else "false"
 
 
-def log_step(task_id: str, step: int, action: str, reward: float):
-    print(
-        f'[STEP] {json.dumps({"task_id": task_id, "step": step, "action": action, "reward": round(reward, 4)})}'
-    )
-    sys.stdout.flush()
-
-
-def log_end(task_id: str, score: float):
-    print(f'[END] {json.dumps({"task_id": task_id, "score": round(score, 4)})}')
-    sys.stdout.flush()
-
-
-def get_client() -> OpenAI:
-    return OpenAI(
-        api_key=HF_TOKEN if HF_TOKEN else "dummy",
-        base_url=API_BASE_URL,
-    )
+def format_reward(value) -> str:
+    return f"{float(value):.2f}"
 
 
 def reset_env(task_id: str) -> Dict:
@@ -54,93 +45,77 @@ def reset_env(task_id: str) -> Dict:
 
 
 def step_env(task_id: str, action: str) -> Dict:
-    payload = {
-        "task_id": task_id,
-        "action": action,
-    }
-
     response = requests.post(
         f"{API_BASE_URL}/step",
-        json=payload,
+        json={"task_id": task_id, "action": action},
         timeout=30,
     )
-
-    if not response.ok:
-        print(f"ERROR /step: {response.status_code} {response.text}")
-        sys.stdout.flush()
-
     response.raise_for_status()
     return response.json()
 
 
-def evaluate_run(task_id: str, history_data: List[Dict]) -> Dict:
-    payload = {
-        "task_id": task_id,
-        "history_data": history_data,
-    }
-
-    response = requests.post(
-        f"{API_BASE_URL}/evaluate",
-        json=payload,
-        timeout=30,
-    )
-
-    if not response.ok:
-        print(f"ERROR /evaluate: {response.status_code} {response.text}")
-        sys.stdout.flush()
-
-    response.raise_for_status()
-    return response.json()
+def choose_action(task_id: str) -> str:
+    return SAFE_ACTIONS[task_id]
 
 
-def run_task(task_id: str) -> float:
-    log_start(task_id)
+def run_episode(task_id: str) -> None:
+    env_name = "cloud-saviour"
+    model_name = MODEL_NAME
 
-    reset_env(task_id)
-    history: List[Dict] = []
+    steps = 0
+    rewards: List[str] = []
+    success = False
+    last_action_error: Optional[str] = None
 
-    action = SAFE_ACTIONS[task_id]
-    max_steps = 8
-
-    for step in range(1, max_steps + 1):
-        result = step_env(task_id, action)
-
-        reward_value = float(result["reward"]["reward"])
-        observation = result["observation"]
-        done = bool(result["done"])
-
-        history.append(
-            {
-                "step": step,
-                "action": action,
-                "reward": reward_value,
-                "state": observation["state"],
-            }
-        )
-
-        log_step(task_id, step, action, reward_value)
-
-        if done:
-            break
-
-    evaluation = evaluate_run(task_id, history)
-    score = float(evaluation.get("score", 0.0))
-    log_end(task_id, score)
-
-    return score
-
-
-def main():
-    _ = get_client()
-
-    scores = []
-    for task_id in TASKS:
-        score = run_task(task_id)
-        scores.append(score)
-
-    average_score = sum(scores) / len(scores) if scores else 0.0
-    print(json.dumps({"average_score": round(average_score, 4)}))
+    print(f"[START] task={task_id} env={env_name} model={model_name}")
     sys.stdout.flush()
+
+    try:
+        reset_env(task_id)
+
+        done = False
+        max_steps = 8
+
+        while not done and steps < max_steps:
+            action = choose_action(task_id)
+
+            try:
+                result = step_env(task_id, action)
+                reward = float(result["reward"]["reward"])
+                done = bool(result["done"])
+                last_action_error = None
+
+            except Exception as step_error:
+                reward = 0.0
+                done = True
+                last_action_error = str(step_error)
+
+            steps += 1
+            rewards.append(format_reward(reward))
+
+            print(
+                f"[STEP] step={steps} action={action} "
+                f"reward={format_reward(reward)} "
+                f"done={format_bool(done)} "
+                f"error={last_action_error if last_action_error is not None else 'null'}"
+            )
+            sys.stdout.flush()
+
+            if done and last_action_error is None:
+                success = True
+
+    finally:
+        print(
+            f"[END] success={format_bool(success)} "
+            f"steps={steps} "
+            f"rewards={','.join(rewards)}"
+        )
+        sys.stdout.flush()
+
+
+def main() -> None:
+    for task_id in TASKS:
+        run_episode(task_id)
 
 
 if __name__ == "__main__":
