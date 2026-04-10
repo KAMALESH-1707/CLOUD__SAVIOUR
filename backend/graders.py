@@ -32,7 +32,7 @@ def _base_grade(
     min_quality: float,
 ) -> float:
     if not agent_history:
-        return 0.0
+        return 0.01
 
     total_cost = 0.0
     total_latency = 0.0
@@ -66,4 +66,7 @@ def _base_grade(
 
     score -= violations * 0.05
 
-    return max(0.0, min(1.0, round(score, 4)))
+    score = round(score, 4)
+    score = max(0.01, min(0.99, score))
+
+    return score
