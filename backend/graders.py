@@ -32,7 +32,7 @@ def _base_grade(
     min_quality: float,
 ) -> float:
     if not agent_history:
-        return 0.01
+        return 0.50
 
     total_cost = 0.0
     total_latency = 0.0
@@ -40,33 +40,38 @@ def _base_grade(
     violations = 0
 
     for step_data in agent_history:
-        state = step_data["state"]
+        state = step_data.get("state", {})
 
-        total_cost += state["monthly_cost"]
-        total_latency += state["latency_ms"]
-        total_quality += state["quality_score"]
+        total_cost += float(state.get("monthly_cost", 0.0))
+        total_latency += float(state.get("latency_ms", 0.0))
+        total_quality += float(state.get("quality_score", 1.0))
 
-        if state["cpu_load"] > 95.0 or state["gpu_load"] > 98.0:
+        if float(state.get("cpu_load", 0.0)) > 95.0 or float(state.get("gpu_load", 0.0)) > 98.0:
             violations += 1
 
-    avg_cost = total_cost / len(agent_history)
-    avg_latency = total_latency / len(agent_history)
-    avg_quality = total_quality / len(agent_history)
+    n = max(1, len(agent_history))
+    avg_cost = total_cost / n
+    avg_latency = total_latency / n
+    avg_quality = total_quality / n
 
-    score = 1.0
+    score = 0.90
 
     if avg_cost > target_cost:
-        score -= min(0.35, (avg_cost - target_cost) / 1000.0)
+        score -= min(0.30, (avg_cost - target_cost) / 2000.0)
 
     if avg_latency > max_latency:
-        score -= min(0.35, (avg_latency - max_latency) / 100.0)
+        score -= min(0.30, (avg_latency - max_latency) / 200.0)
 
     if avg_quality < min_quality:
         score -= min(0.20, (min_quality - avg_quality) * 2.0)
 
-    score -= violations * 0.05
+    score -= min(0.20, violations * 0.03)
 
-    score = round(score, 4)
-    score = max(0.01, min(0.99, score))
+    # Hard clamp to strict open interval (0, 1)
+    score = float(score)
+    if score <= 0.01:
+        score = 0.01
+    elif score >= 0.99:
+        score = 0.99
 
-    return score
+    return round(score, 4)
